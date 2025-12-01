@@ -96,6 +96,42 @@ def save_questions(conn, jd_id: int, questions: List[Dict[str, Any]]):
         )
     conn.commit()
 
+
+def _genai_generate(prompt: str, model: str = None, temperature: float = 0.1, max_output_tokens: int = 512) -> str:
+    """
+    Call the configured Gemini model and return plain text output.
+    Handles common SDK response shapes (.text or resp.candidates[0].content.parts[0].text).
+    Raises RuntimeError if client not configured.
+    """
+    global LLM_CLIENT, LLM_MODEL
+    if LLM_CLIENT is None:
+        raise RuntimeError("LLM client is not configured. Call configure_llm() first.")
+
+    use_model = model or LLM_MODEL or DEFAULT_MODEL
+
+    # Typical call pattern — include temperature and max_output_tokens if SDK accepts it.
+    try:
+        resp = LLM_CLIENT.models.generate_content(
+            model=use_model,
+            contents=prompt,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
+    except TypeError:
+        # some SDK versions may not accept the kwargs; retry minimal call
+        resp = LLM_CLIENT.models.generate_content(model=use_model, contents=prompt)
+
+    # Prefer .text if present
+    if hasattr(resp, "text") and isinstance(resp.text, str):
+        return resp.text
+
+    # Common nested structure for some SDK versions
+    try:
+        return resp.candidates[0].content.parts[0].text
+    except Exception:
+        # Fallback to string representation
+        return str(resp)
+        
 # --- Read helpers (useful for tests / UI) ---
 def get_jds(conn) -> List[Dict[str, Any]]:
     cur = conn.cursor()
