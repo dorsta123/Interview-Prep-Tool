@@ -13,6 +13,11 @@ import time
 from typing import List, Dict, Any
 from datetime import datetime
 
+# Globals for Gemini client
+LLM_CLIENT = None
+LLM_MODEL = None
+
+
 # Optional LLM client import (install when ready)
 # import openai
 
@@ -39,12 +44,27 @@ def save_questions(conn, jd_id: int, questions: List[Dict[str, Any]]):
     pass
 
 # --- LLM wrapper (abstract) ---
-def configure_llm(api_key: str = None, model: str = DEFAULT_MODEL, api_base: str = None):
-    """Set up LLM client without requiring API key input."""
-    # Example stub – adapt based on your LLM provider
-    # openai.api_key = FIXED_SYSTEM_KEY or environment variable
-    # openai.base_url = api_base or default
-    pass
+def configure_llm(api_key: str = None, model: str = None):
+    """
+    Initialize the Google GenAI (Gemini) client.
+    If api_key is provided it will be set to GEMINI_API_KEY env var.
+    model defaults to DEFAULT_MODEL when not provided.
+    """
+    global LLM_CLIENT, LLM_MODEL
+    # Lazy import so the module can be used/tested without the package installed.
+    try:
+        from google import genai
+    except Exception as e:
+        raise RuntimeError("google-genai package not installed. Run: pip install google-genai") from e
+
+    import os
+    if api_key:
+        os.environ["GEMINI_API_KEY"] = api_key
+
+    LLM_MODEL = model or DEFAULT_MODEL
+    # Initialize the client (it will read GEMINI_API_KEY from env)
+    LLM_CLIENT = genai.Client()
+
 
 def call_llm_for_skills(jd_text: str, top_k: int = 6) -> Dict[str, Any]:
     """
