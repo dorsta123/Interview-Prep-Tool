@@ -39,9 +39,11 @@ def save_questions(conn, jd_id: int, questions: List[Dict[str, Any]]):
     pass
 
 # --- LLM wrapper (abstract) ---
-def configure_llm(api_key: str, model: str = DEFAULT_MODEL, api_base: str = None):
-    """Set up LLM client (store config globally or in session)."""
-    # TODO: configure openai or other SDK
+def configure_llm(api_key: str = None, model: str = DEFAULT_MODEL, api_base: str = None):
+    """Set up LLM client without requiring API key input."""
+    # Example stub – adapt based on your LLM provider
+    # openai.api_key = FIXED_SYSTEM_KEY or environment variable
+    # openai.base_url = api_base or default
     pass
 
 def call_llm_for_skills(jd_text: str, top_k: int = 6) -> Dict[str, Any]:
@@ -80,12 +82,15 @@ def compute_skill_readiness(conn, jd_id: int) -> Dict[str, float]:
 # --- Streamlit UI --- 
 def ui_sidebar_settings():
     st.sidebar.header("Settings")
-    api_key = st.sidebar.text_input("LLM API key", type="password")
+    # Removed API key field (users do NOT need to enter key)
     model = st.sidebar.text_input("Model", value=DEFAULT_MODEL)
     if st.sidebar.button("Configure LLM"):
-        configure_llm(api_key, model)
+        # Call without API key
+        configure_llm(api_key=None, model=model)
         st.sidebar.success("LLM configured")
+
     st.sidebar.markdown("---")
+
 
 def ui_upload_jd(conn):
     st.header("Upload / Paste JD")
