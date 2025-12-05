@@ -1,6 +1,6 @@
 # tests/test_db.py
 import pytest
-from jd_prep_skeleton import init_db, save_jd, save_questions, get_jds, get_skills_for_jd, get_questions_for_jd, delete_jd
+from db_skeleton import init_db, save_jd, save_questions, get_jds, get_skills_for_jd, get_questions_for_jd, delete_jd
 
 def test_init_db_and_tables():
     conn = init_db(":memory:")
