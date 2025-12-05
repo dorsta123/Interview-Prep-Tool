@@ -1,6 +1,6 @@
 # tests/test_llm.py
 import types
-import db_skeleton as mod
+import jd_prep_skeleton as mod
 
 # Fake response shapes used by different SDK versions:
 class FakeRespText:
