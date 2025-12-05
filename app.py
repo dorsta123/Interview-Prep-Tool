@@ -7,9 +7,9 @@ Replace TODOs with your implementation. Keep functions small and testable.
 
 # --- Imports ---
 import streamlit as st
-import sqlite3
-import json
-import time
+import sqlite3, json, time
+import db_skeleton as db         
+import jd_prep_skeleton as llm
 from typing import List, Dict, Any
 from datetime import datetime
 
@@ -111,22 +111,136 @@ def ui_sidebar_settings():
 
     st.sidebar.markdown("---")
 
+# Helpers (ensure this appears before ui_upload_jd)
+def show_saved_jds(conn):
+    """
+    Return selected JD dict or None.
+    This helper renders the selectbox and returns the selected JD row.
+    """
+    jds = db.get_jds(conn)
+    if not jds:
+        st.info("No JDs saved yet.")
+        return None
+    options = {f"{r['id']}: {r['title']}": r for r in jds}
+    sel = st.selectbox("Saved JDs", list(options.keys()))
+    return options.get(sel)
+
 
 def ui_upload_jd(conn):
     st.header("Upload / Paste JD")
-    title = st.text_input("Role title")
-    jd_text = st.text_area("Paste JD here", height=200)
+    title = st.text_input("Role title", value="")
+
+    # --- File uploader OR paste ---
+    uploaded_file = st.file_uploader("Upload JD file (PDF, TXT, DOCX)", type=["pdf", "txt", "docx"])
+    jd_text = ""
+
+    # Always define the slider at top-level (avoid scoping issues)
     num_skills = st.slider("Top skills to extract", 4, 10, 6)
-    if st.button("Extract & Save"):
-        if not jd_text.strip():
-            st.warning("Paste a JD first")
-            return
-        parsed = call_llm_for_skills(jd_text, top_k=num_skills)
-        skills = parsed.get("skills", [])
-        jd_id = save_jd(conn, title or "Untitled", jd_text, skills)
-        questions = build_question_pack(title or "Untitled", skills)
-        save_questions(conn, jd_id, questions)
-        st.success(f"Saved JD id={jd_id} with {len(skills)} skills and {len(questions)} questions")
+
+    # Read file if uploaded, else show textarea
+    if uploaded_file:
+        ext = uploaded_file.name.split(".")[-1].lower()
+        try:
+            if ext == "txt":
+                jd_text = uploaded_file.read().decode("utf-8", errors="ignore")
+            elif ext == "pdf":
+                # PyPDF2 required
+                import PyPDF2
+                reader = PyPDF2.PdfReader(uploaded_file)
+                jd_text = "\n".join([page.extract_text() or "" for page in reader.pages])
+            elif ext == "docx":
+                import docx
+                doc = docx.Document(uploaded_file)
+                jd_text = "\n".join([p.text for p in doc.paragraphs])
+            else:
+                st.warning("Unsupported file type.")
+        except Exception as e:
+            st.error(f"Failed to extract text from file: {e}")
+            return  # abort early if file extraction fails
+    else:
+        jd_text = st.text_area("Paste JD here", height=260)
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("Extract & Save"):
+            if not jd_text.strip():
+                st.warning("Please paste a job description or upload a file first.")
+                return
+
+            # Optional: warn if LLM not configured
+            try:
+                # Try a quick check if configure_llm was called (LLM wrapper sets LLM_CLIENT)
+                configured = getattr(llm, "LLM_CLIENT", None) is not None
+            except Exception:
+                configured = False
+
+            if not configured:
+                st.info("LLM not configured — you can configure it in the sidebar or continue and use fallback behavior.")
+
+            # call LLM for skills (stop on failure)
+            try:
+                with st.spinner("Extracting skills..."):
+                    parsed = llm.call_llm_for_skills(jd_text, top_k=num_skills)
+            except Exception as e:
+                st.error(f"Skill extraction failed: {e}")
+                st.stop()  # abort to avoid partial saves / undefined variables
+
+            # normalize parsed
+            skills = parsed.get("skills", []) if isinstance(parsed, dict) else []
+            domain = parsed.get("domain", "") if isinstance(parsed, dict) else ""
+            seniority = parsed.get("seniority", "") if isinstance(parsed, dict) else ""
+            summary = parsed.get("summary", "") if isinstance(parsed, dict) else ""
+
+            # Save JD & skills
+            try:
+                jd_id = db.save_jd(conn, title or "Untitled", jd_text, skills, domain=domain, seniority=seniority, summary=summary)
+                st.success(f"Saved JD id={jd_id}")
+            except Exception as e:
+                st.error(f"Failed to save JD: {e}")
+                return
+
+            # Generate questions
+            try:
+                with st.spinner("Generating questions..."):
+                    questions = llm.call_llm_for_questions(title or "Untitled", skills)
+            except Exception as e:
+                st.error(f"Question generation failed: {e}")
+                questions = []
+
+            # Save questions
+            try:
+                db.save_questions(conn, jd_id, questions)
+                st.success(f"Saved {len(questions)} questions for JD {jd_id}")
+            except Exception as e:
+                st.error(f"Failed to save questions: {e}")
+
+            # Show preview
+            if skills:
+                st.subheader("Extracted skills")
+                st.write(skills)
+            if summary:
+                st.subheader("Summary / metadata")
+                st.write(f"**Domain:** {domain}  ·  **Seniority:** {seniority}")
+                st.write(summary)
+            if questions:
+                st.subheader("Generated questions (first 8)")
+                for q in questions[:8]:
+                    st.markdown(f"- **{q.get('qtype','')}** — *{q.get('skill','')}*: {q.get('prompt','')}")
+    with col2:
+        st.subheader("Preview saved JDs")
+        selected = show_saved_jds(conn)
+        if selected:
+            st.write("**Title:**", selected["title"])
+            st.write("**Summary:**", selected.get("summary", ""))
+            st.write("**Domain / Seniority:**", selected.get("domain", ""), "/", selected.get("seniority", ""))
+            qlist = db.get_questions_for_jd(conn, selected["id"])
+            if qlist:
+                st.markdown("**Questions (stored):**")
+                for q in qlist[:10]:
+                    st.markdown(f"- **{q['qtype']}** — *{q['skill']}*: {q['prompt']}")
+            else:
+                st.info("No questions stored for this JD yet.")
+
 
 def ui_practice(conn):
     st.header("Practice")
