@@ -9,54 +9,31 @@ as well as the Streamlit UI (if you want to add it later).
 import os
 import json
 from typing import Any, List, Dict
+import google.generativeai as genai
+from google.generativeai import GenerativeModel
 # import streamlit as st  # uncomment when you add UI
 # from google import genai  # import inside configure_llm to keep tests offline
 
-# --- Constants & globals ---
-DEFAULT_MODEL = "gemini-2.5-flash"
-LLM_CLIENT = None
-LLM_MODEL = None
+# ⚠️ Put YOUR API key here
+GEMINI_API_KEY = "AIzaSyBzjCPGCpW8R8i9XUewpvRA0ptvQU7QCNI"
+DEFAULT_MODEL="gemini-2.5-flash"
 
-# --- LLM setup ---
-def configure_llm(api_key: str = None, model: str = None):
-    """
-    Initialize Gemini client. Sets GEMINI_API_KEY env var if provided.
-    """
+def configure_llm(model="gemini-2.5-flash", api_base=None):
     global LLM_CLIENT, LLM_MODEL
-    try:
-        from google import genai
-    except Exception as e:
-        raise RuntimeError("google-genai package not installed. Run: pip install google-genai") from e
+    genai.configure(api_key=GEMINI_API_KEY)
+    LLM_CLIENT = genai
+    LLM_MODEL = model
 
-    if api_key:
-        os.environ["GEMINI_API_KEY"] = api_key
-    LLM_MODEL = model or DEFAULT_MODEL
-    LLM_CLIENT = genai.Client()
 
-def _genai_generate(prompt: str, model: str = None, temperature: float = 0.1, max_output_tokens: int = 512) -> str:
-    """
-    Call Gemini and return text. Handles common response shapes.
-    """
-    global LLM_CLIENT, LLM_MODEL
-    if LLM_CLIENT is None:
-        raise RuntimeError("LLM client is not configured. Call configure_llm() first.")
+def _genai_generate(prompt: str, model: str = None, temperature: float = 0.1, max_output_tokens: int = 512):
     use_model = model or LLM_MODEL or DEFAULT_MODEL
-    try:
-        resp = LLM_CLIENT.models.generate_content(
-            model=use_model,
-            contents=prompt,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-        )
-    except TypeError:
-        resp = LLM_CLIENT.models.generate_content(model=use_model, contents=prompt)
+    gen_model = GenerativeModel(use_model)
+    resp = gen_model.generate_content(
+        prompt,
+        generation_config={"temperature": temperature, "max_output_tokens": max_output_tokens}
+    )
+    return getattr(resp, "text", str(resp))
 
-    if hasattr(resp, "text") and isinstance(resp.text, str):
-        return resp.text
-    try:
-        return resp.candidates[0].content.parts[0].text
-    except Exception:
-        return str(resp)
 
 def _parse_json_from_text(raw: str) -> Any:
     """
