@@ -15,7 +15,7 @@ from google.generativeai import GenerativeModel
 # from google import genai  # import inside configure_llm to keep tests offline
 
 # ⚠️ Put YOUR API key here
-GEMINI_API_KEY = "AIzaSyBzjCPGCpW8R8i9XUewpvRA0ptvQU7QCNI"
+GEMINI_API_KEY = ""
 DEFAULT_MODEL="gemini-2.5-flash"
 
 def configure_llm(model="gemini-2.5-flash", api_base=None):
