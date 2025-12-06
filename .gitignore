@@ -1,0 +1,4 @@
+.env
+jd_prep.db
+__pycache__/
+tests/__pycache__/
