@@ -6,16 +6,17 @@ as well as the Streamlit UI (if you want to add it later).
 """
 
 # --- Imports ---
-import os
-import json
 from typing import Any, List, Dict
+import os, json
 import google.generativeai as genai
+from dotenv import load_dotenv
 from google.generativeai import GenerativeModel
 # import streamlit as st  # uncomment when you add UI
 # from google import genai  # import inside configure_llm to keep tests offline
 
 # ⚠️ Put YOUR API key here
-GEMINI_API_KEY = "AIzaSyBzjCPGCpW8R8i9XUewpvRA0ptvQU7QCNI"
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DEFAULT_MODEL="gemini-2.5-flash"
 
 def configure_llm(model="gemini-2.5-flash", api_base=None):
@@ -82,9 +83,10 @@ of the role.
 Return ONLY valid JSON in this exact format (no extra commentary):
 {{"skills": ["skill1","skill2",...], "domain":"...", "seniority":"...", "summary":"..."}}
 
-Job Description:
+Do not write something else except json. not even the intro and end. 
 """
     raw = _genai_generate(prompt, model=LLM_MODEL, temperature=0.0, max_output_tokens=400)
+    print(raw)
     try:
         parsed = _parse_json_from_text(raw)
         if not isinstance(parsed, dict):
@@ -118,8 +120,9 @@ def call_llm_for_questions(jd_title: str, skills: List[str]) -> List[Dict[str,st
     # simple template fallback if LLM not ready yet
     try:
         skill_list = ", ".join(skills)
-        prompt = f"Generate interview questions for role {jd_title} covering skills: {skill_list}. Return JSON array of objects {{'skill','qtype','prompt'}}"
+        prompt = f"Generate interview questions for role {jd_title}. covering skills: {skill_list}. Return JSON array of objects {{'skill','qtype','prompt'}}. do a deep analysis and give 5 trendy questions for each skills asked in similar job title. Don't give back anything except the json, not even the start and end"
         raw = _genai_generate(prompt, model=LLM_MODEL, temperature=0.15, max_output_tokens=700)
+        print(raw)
         parsed = _parse_json_from_text(raw)
         if isinstance(parsed, list):
             return parsed
