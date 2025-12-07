@@ -8,32 +8,63 @@ as well as the Streamlit UI (if you want to add it later).
 # --- Imports ---
 from typing import Any, List, Dict
 import os, json
-import google.generativeai as genai
 from dotenv import load_dotenv
-from google.generativeai import GenerativeModel
-# import streamlit as st  # uncomment when you add UI
-# from google import genai  # import inside configure_llm to keep tests offline
+
+from google import genai 
+from google.genai import types # Import types for configuration objects (if you used the suggested code)
 
 # ⚠️ Put YOUR API key here
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DEFAULT_MODEL="gemini-2.5-flash"
 
+# jd_prep_skeleton.py (configure_llm function)
+
 def configure_llm(model="gemini-2.5-flash", api_base=None):
     global LLM_CLIENT, LLM_MODEL
-    genai.configure(api_key=GEMINI_API_KEY)
-    LLM_CLIENT = genai
-    LLM_MODEL = model
+    
+    # ❌ REMOVE THIS LINE (Causes the AttributeError)
+    # genai.configure(api_key=GEMINI_API_KEY) 
+    
+    try:
+        # ✅ NEW SDK: Instantiate the client directly.
+        # It automatically picks up the API key from the GEMINI_API_KEY environment variable.
+        LLM_CLIENT = genai.Client() 
+        LLM_MODEL = model
+        print("LLM Client initialized successfully.")
+    except Exception as e:
+        print(f"GENAI ERROR: Client initialization failed. Check your API key or environment: {e}")
+        LLM_CLIENT = None
+        
+    return LLM_CLIENT
 
+# jd_prep_skeleton.py (_genai_generate function)
 
-def _genai_generate(prompt: str, model: str = None, temperature: float = 0.1, max_output_tokens: int = 512):
-    use_model = model or LLM_MODEL or DEFAULT_MODEL
-    gen_model = GenerativeModel(use_model)
-    resp = gen_model.generate_content(
-        prompt,
-        generation_config={"temperature": temperature, "max_output_tokens": max_output_tokens}
-    )
-    return getattr(resp, "text", str(resp))
+def _genai_generate(prompt, model=None, temperature=0.2, max_output_tokens=5000):
+    global LLM_CLIENT
+    
+    if LLM_CLIENT is None:
+        print("GENAI ERROR: LLM Client is not initialized. Cannot generate content.")
+        return ""
+        
+    model = model or LLM_MODEL
+    
+    try:
+        # ❌ OLD (Error): LLM_CLIENT.generate_content(...) 
+        # ✅ CORRECTED: Use the .models attribute on the Client object
+        response = LLM_CLIENT.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig( 
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+            )
+        )
+        return response.text
+
+    except Exception as e:
+        print("GENAI ERROR:", e)
+        return ""
 
 
 def _parse_json_from_text(raw: str) -> Any:
@@ -70,70 +101,70 @@ def _parse_json_from_text(raw: str) -> Any:
             pass
     raise ValueError("Could not parse JSON from LLM output")
 
-def call_llm_for_skills(jd_text: str, top_k: int = 6) -> Dict[str, Any]:
-    """
-    Extract top skills, domain, seniority, and summary from JD text.
-    """
+def call_llm_for_skills(jd_text: str, top_k: int = 6):
     prompt = f"""
-You are an expert recruiter assistant. Given the job description delimited by triple backticks,
-extract the TOP {top_k} skills (short phrases), one-word or short 'domain' (e.g., Data Engineering),
-an approximate 'seniority' (one of: junior, mid, senior, lead, manager), and a concise 1-2 sentence 'summary'
-of the role.
+        Extract the top {top_k} skills, one-word domain, seniority, and 1–2 sentence summary
+        from the following job description:
 
-Return ONLY valid JSON in this exact format (no extra commentary):
-{{"skills": ["skill1","skill2",...], "domain":"...", "seniority":"...", "summary":"..."}}
+        {jd_text}
 
-Do not write something else except json. not even the intro and end. 
-"""
-    raw = _genai_generate(prompt, model=LLM_MODEL, temperature=0.0, max_output_tokens=400)
+        Return ONLY JSON:
+        {{
+        "skills": [...],
+        "domain": "...",
+        "seniority": "...",
+        "summary": "..."
+        }}
+        """
+    raw = _genai_generate(prompt)
     print(raw)
+
     try:
         parsed = _parse_json_from_text(raw)
-        if not isinstance(parsed, dict):
-            raise ValueError("Parsed JSON not an object")
-        skills = parsed.get("skills") or []
-        skills = [str(s).strip() for s in skills if str(s).strip()][:top_k]
-        domain = str(parsed.get("domain") or "").strip()
-        seniority = str(parsed.get("seniority") or "").strip()
-        summary = str(parsed.get("summary") or "").strip()
-        return {"skills": skills, "domain": domain, "seniority": seniority, "summary": summary}
-    except Exception:
-        # fallback: simple heuristic
-        fallback_skills = []
-        try:
-            head = " ".join(jd_text.strip().splitlines()[:3])
-            candidates = [p.strip() for p in head.replace("/", ",").split(",") if len(p.strip()) > 2]
-            for c in candidates:
-                if len(fallback_skills) >= top_k:
-                    break
-                token = c.split("(")[0].strip()
-                if 3 <= len(token) <= 80:
-                    fallback_skills.append(token)
-        except Exception:
-            pass
-        return {"skills": fallback_skills, "domain": "", "seniority": "", "summary": ""}
+        if isinstance(parsed, dict):
+            return parsed
+    except:
+        pass
 
-def call_llm_for_questions(jd_title: str, skills: List[str]) -> List[Dict[str,str]]:
+    # LAST-RESORT fallback (never breaks)
+    return {
+        "skills": ["Skill A", "Skill B", "Skill C"][:top_k],
+        "domain": "general",
+        "seniority": "mid",
+        "summary": "Summary unavailable due to model error."
+    }
+
+
+def call_llm_for_questions(jd_title, skills):
+    prompt = f"""
+    Generate 10 interview questions for the role: {jd_title}
+    The skills to target are: {", ".join(skills)}
+
+    Return ONLY JSON list:
+    [
+    {{"skill": "...", "qtype": "...", "prompt": "..."}},
+    ...
+    ]
     """
-    Stub for question generation; keep simple or replace with actual prompt later.
-    """
-    # simple template fallback if LLM not ready yet
+    raw = _genai_generate(prompt)
     try:
-        skill_list = ", ".join(skills)
-        prompt = f"Generate interview questions for role {jd_title}. covering skills: {skill_list}. Return JSON array of objects {{'skill','qtype','prompt'}}. do a deep analysis and give 5 trendy questions for each skills asked in similar job title. Don't give back anything except the json, not even the start and end"
-        raw = _genai_generate(prompt, model=LLM_MODEL, temperature=0.15, max_output_tokens=700)
-        print(raw)
         parsed = _parse_json_from_text(raw)
         if isinstance(parsed, list):
             return parsed
-    except Exception:
+    except:
         pass
-    # fallback: return simple templated questions
+
+    # fallback
     out = []
-    for s in (skills[:6] if skills else ["general"]):
-        out.append({"skill": s, "qtype": "technical", "prompt": f"Explain a core concept related to {s}."})
-        out.append({"skill": s, "qtype": "behavioral", "prompt": f"Tell me about a time you used {s}."})
-    # limit to 12
-    return out[:12]
+    for s in skills[:5]:
+        out.append({"skill": s, "qtype": "technical", "prompt": f"What is {s}?"})
+        out.append({"skill": s, "qtype": "behavioral", "prompt": f"Describe a time you used {s}."})
+    return out
+
 
 # (optional) you can add Streamlit UI functions here or in another module that imports db_skeleton
+
+#only for testing purposes
+'''configure_llm()
+print(_genai_generate("hi"))
+'''
