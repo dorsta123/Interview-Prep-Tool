@@ -88,28 +88,68 @@ def show_saved_jds(conn):
     sel = st.selectbox("Saved JDs", list(options.keys()))
     return options.get(sel)
 
+def render_question_card(q, index):
+    """Helper to render a nice HTML card for a question with a number"""
+    card_html = f"""
+    <div style="
+        background: #ffffff;
+        border: 1px solid #e6e6e6;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    ">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="font-weight:600;font-size:14px;color:#333;">
+                <span style="color:#888; margin-right:8px; font-weight:normal;">#{index}</span>
+                {q.get('skill','').title() or 'General'}
+            </div>
+            <div style="
+                font-size:11px;
+                padding:4px 8px;
+                border-radius:999px;
+                background:#eef2ff;
+                color:#3b4cca;
+                font-weight:600;
+            ">
+                {str(q.get('qtype','')).upper() or 'QUESTION'}
+            </div>
+        </div>
+        <div style="margin-top:10px;line-height:1.4;color:#444;">
+            {q.get('prompt','')}
+        </div>
+    </div>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
+
 
 def ui_upload_jd(conn):
     st.header("Upload / Paste JD")
 
     # Wide middle area + narrower right sidebar
-    col_left, spacer, col_right = st.columns([3, 0.2,1])
+    col_left, spacer, col_right = st.columns([3, 0.2, 1])
 
-    # -------- LEFT COLUMN: main workflow --------
+    # ---------------------------------------------------------
+    # 1. RIGHT COLUMN: Selection Only
+    # ---------------------------------------------------------
+    with col_right:
+        st.subheader("Saved JDs")
+        selected_jd = show_saved_jds(conn)
+
+    # ---------------------------------------------------------
+    # 2. LEFT COLUMN: Upload Form AND Display Area
+    # ---------------------------------------------------------
     with col_left:
+        # --- A. The Upload Form ---
         title = st.text_input("Role title", value="")
 
-        # File uploader OR paste
         uploaded_file = st.file_uploader(
             "Upload JD file (PDF, TXT, DOCX)",
             type=["pdf", "txt", "docx"]
         )
         jd_text = ""
-
-        # Slider for skills
         num_skills = st.slider("Top skills to extract", 4, 10, 6)
 
-        # Read file if uploaded, else show textarea
         if uploaded_file:
             ext = uploaded_file.name.split(".")[-1].lower()
             try:
@@ -117,9 +157,7 @@ def ui_upload_jd(conn):
                     jd_text = uploaded_file.read().decode("utf-8", errors="ignore")
                 elif ext == "pdf":
                     reader = PyPDF2.PdfReader(uploaded_file)
-                    jd_text = "\n".join(
-                        [page.extract_text() or "" for page in reader.pages]
-                    )
+                    jd_text = "\n".join([page.extract_text() or "" for page in reader.pages])
                 elif ext == "docx":
                     doc = docx.Document(uploaded_file)
                     jd_text = "\n".join([p.text for p in doc.paragraphs])
@@ -129,30 +167,22 @@ def ui_upload_jd(conn):
                 st.error(f"Failed to extract text from file: {e}")
                 return
         else:
-            jd_text = st.text_area("Paste JD here", height=260)
+            jd_text = st.text_area("Paste JD here", height=150)
 
-        questions = []
-        skills = []
-        domain = seniority = summary = ""
-
+        # --- B. Extraction Logic (New JD) ---
         if st.button("Extract & Save", key="extract_save"):
             if not jd_text.strip():
                 st.warning("Please paste a job description or upload a file first.")
                 return
 
-            # Check if LLM is configured (soft warning only)
             try:
                 configured = getattr(llm, "LLM_CLIENT", None) is not None
             except Exception:
                 configured = False
-
+            
             if not configured:
-                st.info(
-                    "LLM not configured — configure it in the sidebar, "
-                    "or continue and rely on fallback behavior."
-                )
+                st.info("LLM not configured. Expect fallback results.")
 
-            # 1) Extract skills / metadata
             try:
                 with st.spinner("Extracting skills..."):
                     parsed = llm.call_llm_for_skills(jd_text, top_k=num_skills)
@@ -160,28 +190,18 @@ def ui_upload_jd(conn):
                 st.error(f"Skill extraction failed: {e}")
                 st.stop()
 
-            skills = parsed.get("skills", []) if isinstance(parsed, dict) else []
-            domain = parsed.get("domain", "") if isinstance(parsed, dict) else ""
-            seniority = parsed.get("seniority", "") if isinstance(parsed, dict) else ""
-            summary = parsed.get("summary", "") if isinstance(parsed, dict) else ""
+            skills = parsed.get("skills", [])
+            domain = parsed.get("domain", "")
+            seniority = parsed.get("seniority", "")
+            summary = parsed.get("summary", "")
 
-            # 2) Save JD + skills
             try:
-                jd_id = db.save_jd(
-                    conn,
-                    title or "Untitled",
-                    jd_text,
-                    skills,
-                    domain=domain,
-                    seniority=seniority,
-                    summary=summary,
-                )
+                jd_id = db.save_jd(conn, title or "Untitled", jd_text, skills, domain, seniority, summary)
                 st.success(f"Saved JD id={jd_id}")
             except Exception as e:
                 st.error(f"Failed to save JD: {e}")
                 return
 
-            # 3) Generate questions
             try:
                 with st.spinner("Generating questions..."):
                     questions = llm.call_llm_for_questions(title or "Untitled", skills)
@@ -189,84 +209,40 @@ def ui_upload_jd(conn):
                 st.error(f"Question generation failed: {e}")
                 questions = []
 
-            # 4) Save questions
-            try:
-                db.save_questions(conn, jd_id, questions)
-                st.success(f"Saved {len(questions)} questions for JD {jd_id}")
-            except Exception as e:
-                st.error(f"Failed to save questions: {e}")
+            db.save_questions(conn, jd_id, questions)
+            
+            st.markdown("---")
+            st.subheader("New Extraction Results")
+            st.write(f"**Skills:** {skills}")
+            st.write(f"**Summary:** {summary}")
+            
+            # Pass index 'i' to the render function
+            for i, q in enumerate(questions, 1):
+                render_question_card(q, i)
+            
+            return
 
-            # 5) Show preview in the same wide left area
-            if skills:
-                st.subheader("Extracted skills")
-                st.write(skills)
+        # --- C. View Logic (Saved JD) ---
+        if selected_jd:
+            st.markdown("---")
+            st.subheader(f"Viewing Saved JD: {selected_jd['title']}")
+            
+            c1, c2, c3 = st.columns(3)
+            with c1: st.write(f"**Domain:** {selected_jd.get('domain', 'N/A')}")
+            with c2: st.write(f"**Seniority:** {selected_jd.get('seniority', 'N/A')}")
+            with c3: st.write(f"**Date:** {selected_jd.get('created_at', '')[:10]}")
+            
+            st.write(f"**Summary:** {selected_jd.get('summary', '')}")
 
-            if summary:
-                st.subheader("Summary / metadata")
-                st.write(f"**Domain:** {domain}  ·  **Seniority:** {seniority}")
-                st.write(summary)
-
-            if questions:
-                st.subheader("Generated Questions")
-                print(questions)
-
-                # Single-column full-width cards (spanning entire left column)
-                for q in questions:
-                    card_html = f"""
-                    <div style="
-                        background: #ffffff;
-                        border: 1px solid #e6e6e6;
-                        border-radius: 12px;
-                        padding: 16px;
-                        margin-bottom: 16px;
-                        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-                    ">
-                        <div style="display:flex;justify-content:space-between;align-items:center;">
-                            <div style="font-weight:600;font-size:14px;color:#333;">
-                                {q.get('skill','').title() or 'General'}
-                            </div>
-                            <div style="
-                                font-size:11px;
-                                padding:4px 8px;
-                                border-radius:999px;
-                                background:#eef2ff;
-                                color:#3b4cca;
-                                font-weight:600;
-                            ">
-                                {q.get('qtype','').upper() or 'QUESTION'}
-                            </div>
-                        </div>
-                        <div style="margin-top:10px;line-height:1.4;color:#444;">
-                            {q.get('prompt','')}
-                        </div>
-                    </div>
-                    """
-                    st.markdown(card_html, unsafe_allow_html=True)
-
-    # -------- RIGHT COLUMN: full sidebar for saved JDs --------
-    with col_right:
-        st.subheader("Preview saved JDs")
-        selected = show_saved_jds(conn)
-        if selected:
-            st.write("**Title:**", selected["title"])
-            st.write("**Summary:**", selected.get("summary", ""))
-            st.write(
-                "**Domain / Seniority:**",
-                selected.get("domain", ""),
-                "/",
-                selected.get("seniority", ""),
-            )
-
-            qlist = db.get_questions_for_jd(conn, selected["id"])
+            qlist = db.get_questions_for_jd(conn, selected_jd["id"])
+            
             if qlist:
-                st.markdown("**Questions (stored):**")
-                for q in qlist[:10]:
-                    st.markdown(
-                        f"- **{q['qtype']}** — *{q['skill']}*: {q['prompt']}"
-                    )
+                st.subheader(f"Questions ({len(qlist)})")
+                # Pass index 'i' to the render function
+                for i, q in enumerate(qlist, 1):
+                    render_question_card(q, i)
             else:
-                st.info("No questions stored for this JD yet.")
-
+                st.info("No questions stored for this JD.")
 
 
 def ui_practice(conn):
