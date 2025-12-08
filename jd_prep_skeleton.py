@@ -137,7 +137,7 @@ def call_llm_for_skills(jd_text: str, top_k: int = 6):
 
 def call_llm_for_questions(jd_title, skills):
     prompt = f"""
-    Generate 10 interview questions for the role: {jd_title}
+    Generate 25 interview questions for the role: {jd_title}
     The skills to target are: {", ".join(skills)}
 
     Return ONLY JSON list:
