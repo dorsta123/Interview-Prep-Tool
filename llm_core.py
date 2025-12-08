@@ -17,13 +17,20 @@ LLM_MODEL = DEFAULT_MODEL
 def configure_llm(model="gemini-2.5-flash", api_base=None):
     global LLM_CLIENT, LLM_MODEL
     
+    # 1. Try getting key from environment if not explicitly passed
+    api_key = os.getenv("GEMINI_API_KEY")
+    
+    if not api_key:
+        print("❌ CRITICAL: GEMINI_API_KEY is missing from environment variables.")
+        return None
+
     try:
-        # It automatically picks up the API key from the GEMINI_API_KEY environment variable.
-        LLM_CLIENT = genai.Client() 
+        # 2. Re-initialize the client
+        LLM_CLIENT = genai.Client(api_key=api_key) 
         LLM_MODEL = model
-        print("LLM Client initialized successfully.")
+        print(f"✅ LLM Client initialized with model: {model}")
     except Exception as e:
-        print(f"GENAI ERROR: Client initialization failed. Check your API key or environment: {e}")
+        print(f"❌ GENAI INIT ERROR: {e}")
         LLM_CLIENT = None
         
     return LLM_CLIENT
